@@ -28,3 +28,5 @@ MANIFEST
 
 depthai-core/
 venv/
+scan_output/
+Arduino UNO GBRL/
