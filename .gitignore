@@ -31,3 +31,4 @@ venv/
 scan_output/
 Arduino UNO GBRL/
 grbl-master.zip
+*yaml
