@@ -1,13 +1,13 @@
 # ── Serial Settings ──
 serial:
-  port: "/dev/ttyACM1"
+  port: "/dev/ttyACM0"
   baudrate: 115200
-  timeout: 10.0          # seconds to wait for 'ok' per command
+  timeout: 20.0          # seconds to wait for 'ok' per command
 
 # ── Camera Settings ──
 camera:
-  resolution: "800p"     # 400p | 480p | 720p | 800p
-  confidence: 200        # stereo confidence threshold (0-255)
+  resolution: "400p"     # 400p | 480p | 720p | 800p
+  confidence: 150        # stereo confidence threshold (0-255)
   median_filter: 7       # median kernel: 0 (off) | 3 | 5 | 7
   subpixel: true
   lr_check: true
@@ -17,16 +17,16 @@ camera:
 motion:
   feedrate: 1250         # mm/min for all G1 moves
   z_height: 50.0         # fixed Z for the scan (mm)
-  settle_time: 0.25       # seconds to wait after each move before capture
+  settle_time: 0.5       # seconds to wait after each move before capture
 
 # ── Grid Definition ──
 #   Each axis: start, stop, step (inclusive of endpoints)
 grid:
-  x_start: 100.0
-  x_stop: 500.0
+  x_start: 150.0
+  x_stop: 450.0
   x_step: 100.0
-  y_start: 100.0
-  y_stop: 400.0
+  y_start: 250.0
+  y_stop: 250.0
   y_step: 100.0
 
 # ── Output Settings ──

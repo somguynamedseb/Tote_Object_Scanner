@@ -173,6 +173,18 @@ class OakDDepthCamera:
                 continue
             while q.has():
                 q.get()
+                
+    def capture(self, warmup_frames=30):
+        """Capture a depth + disparity pair after letting auto-exposure stabilize."""
+        log.info("Warming up camera (%d frames) …", warmup_frames)
+        for i in range(warmup_frames):
+            self._depth_queue.get()
+            self._disparity_queue.get()
+        log.info("Warm-up complete, capturing frame.")
+
+        depth = self.get_depth_frame()
+        disparity = self.get_disparity_frame()
+        return depth, disparity
 
 
 # ---------------------------------------------------------------------------
@@ -356,7 +368,7 @@ def run_scan(cfg: dict):
             # ── Capture ──
             entry: dict = {"index": idx, "x": x, "y": y}
 
-            depth = camera.get_depth_frame()
+            depth, disparity = camera.capture(warmup_frames=30)
             if depth is None:
                 log.warning("No depth frame at position %d — skipping.", idx)
                 continue
