@@ -6,28 +6,32 @@ serial:
 
 # ── Camera Settings ──
 camera:
-  resolution: "400p"     # 400p | 480p | 720p | 800p
-  confidence: 150        # stereo confidence threshold (0-255)
-  median_filter: 7       # median kernel: 0 (off) | 3 | 5 | 7
-  subpixel: true
+  fps: 30
+  confidence: 75        # stereo confidence threshold (0-255)
+  median_filter: 0       # median kernel: 0 (off) | 3 | 5 | 7
+  subpixel: false
+  subpixel_frac_bits: 3
   lr_check: true
+  lr_check_th: 9
   extended_disparity: false
+  disparity_shift: 30
+  warmup_frames: 5
 
 # ── Motion Settings ──
 motion:
-  feedrate: 1250         # mm/min for all G1 moves
+  feedrate: 5000         # mm/min for all G1 moves
   z_height: 50.0         # fixed Z for the scan (mm)
-  settle_time: 0.5       # seconds to wait after each move before capture
+  settle_time: 0.1       # seconds to wait after each move before capture
 
 # ── Grid Definition ──
 #   Each axis: start, stop, step (inclusive of endpoints)
 grid:
-  x_start: 150.0
-  x_stop: 450.0
-  x_step: 100.0
-  y_start: 250.0
-  y_stop: 250.0
-  y_step: 100.0
+  x_start: 50.0
+  x_stop: 550.0
+  x_step: 50.0
+  y_start: 75.0
+  y_stop: 425.0
+  y_step: 50.0
 
 # ── Output Settings ──
 output:

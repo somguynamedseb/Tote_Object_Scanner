@@ -103,6 +103,8 @@ def depth_to_cloud(
     max_radius: float = 0,
     x_offset: float = 0.0,
     y_offset: float = 0.0,
+    world_x_limits: tuple[float, float] = None,
+    world_y_limits: tuple[float, float] = None,
 ) -> o3d.geometry.PointCloud:
     """
     Back-project a depth frame into a coloured 3D point cloud with filtering.
@@ -137,10 +139,20 @@ def depth_to_cloud(
         z_valid = z_valid[within]
 
     # Apply gantry offset so tiles combine in world coordinates
-    x += x_offset
-    y += y_offset
+    x -= x_offset
+    y += y_offset 
 
-    points = np.column_stack((y, x, z_valid))
+    if world_x_limits is not None or world_y_limits is not None:
+        keep = np.ones(len(x), dtype=bool)
+        if world_x_limits is not None:
+            keep &= (x <= -world_x_limits[0]) & (x >= -world_x_limits[1])
+        if world_y_limits is not None:
+            keep &= (y >= world_y_limits[0]) & (y <= world_y_limits[1])
+        x = x[keep]
+        y = y[keep]
+        z_valid = z_valid[keep]
+
+    points = np.column_stack((x, y, z_valid))
 
     if len(points) == 0:
         return o3d.geometry.PointCloud()
@@ -177,6 +189,8 @@ def build_combined_cloud(
     fy: float = None,
     cx: float = None,
     cy: float = None,
+    world_x_limits: tuple[float, float] = None,
+    world_y_limits: tuple[float, float] = None,
 ) -> o3d.geometry.PointCloud:
     """Load every raw .npy, filter per-frame, then combine into one cloud."""
 
@@ -214,7 +228,8 @@ def build_combined_cloud(
             max_radius=max_radius,
             x_offset=entry["y"],
             y_offset=entry["x"],#i know they are flipped but that fixes orientation issues, will fix later
-            
+            world_x_limits=world_x_limits,
+            world_y_limits=world_y_limits,
         )
 
         n_before = len(cloud.points)
@@ -267,17 +282,17 @@ def main():
                         help="Path to scan session folder (manifest.json + .npy files)")
     parser.add_argument("-c", "--config", default="scan_config.yaml",
                         help="Path to the YAML config file (default: scan_config.yaml)")
-    parser.add_argument("--min", type=float, default=250,
-                        help="Min depth in mm (default: 250)")
-    parser.add_argument("--max", type=float, default=450,
+    parser.add_argument("--min", type=float, default=175,
+                        help="Min depth in mm (default: 200)")
+    parser.add_argument("--max", type=float, default=475,
                         help="Max depth in mm (default: 450)")
-    parser.add_argument("--radius", type=float, default=300,
+    parser.add_argument("--radius", type=float, default=500,
                         help="Max lateral (XY) distance from optical axis in mm. "
                              "Crops each frame to a cylinder. 0 = no limit. (default: 300)")
     parser.add_argument("--voxel", type=float, default=0,
                         help="Voxel downsample size in mm after merging (0 = off)")
-    parser.add_argument("--sor", type=int, default=0,
-                        help="Statistical outlier removal: neighbor count per frame (e.g. 20). 0 = off.")
+    parser.add_argument("--sor", type=int, default=200,
+                        help="Statistical outlier removal: neighbor count per frame (e.g. 20). 0 = off. (400 works well)")
     parser.add_argument("--sor-std", type=float, default=2.0,
                         help="SOR std deviation threshold (default: 2.0)")
     parser.add_argument("--fx", type=float, default=None,
@@ -290,8 +305,26 @@ def main():
                         help="Camera principal point Y (auto from OAK-D if omitted)")
     parser.add_argument("--no-viewer", action="store_true",
                         help="Skip the interactive 3D viewer, just export .ply")
+    parser.add_argument("--world-x-min", type=float, default=50,
+                        help="Hard minimum X in world coordinates (mm)")
+    parser.add_argument("--world-x-max", type=float, default=400,
+                        help="Hard maximum X in world coordinates (mm)")
+    parser.add_argument("--world-y-min", type=float, default=75,
+                        help="Hard minimum Y in world coordinates (mm)")
+    parser.add_argument("--world-y-max", type=float, default=575,
+                        help="Hard maximum Y in world coordinates (mm)")
+    
+    # parser.add_argument("--world-x-min", type=float, default=None,
+    #                     help="Hard minimum X in world coordinates (mm)")
+    # parser.add_argument("--world-x-max", type=float, default=None,
+    #                     help="Hard maximum X in world coordinates (mm)")
+    # parser.add_argument("--world-y-min", type=float, default=None,
+    #                     help="Hard minimum Y in world coordinates (mm)")
+    # parser.add_argument("--world-y-max", type=float, default=None,
+    #                     help="Hard maximum Y in world coordinates (mm)")
+    
     args = parser.parse_args()
-
+    
     scan_dir = Path(args.scan_dir)
     if not scan_dir.is_dir():
         log.error("Not a directory: %s", scan_dir)
@@ -303,7 +336,21 @@ def main():
         sys.exit(1)
 
     log.info("Loaded %d entries from manifest.", len(manifest))
-
+    
+    # Build world-coordinate limit tuples (None if not specified)
+    world_x_limits = None
+    if args.world_x_min is not None or args.world_x_max is not None:
+        world_x_limits = (
+            args.world_x_min if args.world_x_min is not None else -np.inf,
+            args.world_x_max if args.world_x_max is not None else np.inf,
+        )
+ 
+    world_y_limits = None
+    if args.world_y_min is not None or args.world_y_max is not None:
+        world_y_limits = (
+            args.world_y_min if args.world_y_min is not None else -np.inf,
+            args.world_y_max if args.world_y_max is not None else np.inf,
+        )
     # ── Build combined, filtered point cloud ──
     cloud = build_combined_cloud(
         manifest, scan_dir,
@@ -313,6 +360,8 @@ def main():
         voxel_size=args.voxel,
         sor_neighbors=args.sor,
         sor_std=args.sor_std,
+        world_x_limits=world_x_limits,
+        world_y_limits=world_y_limits,
         fx=args.fx, fy=args.fy, cx=args.cx, cy=args.cy,
     )
 

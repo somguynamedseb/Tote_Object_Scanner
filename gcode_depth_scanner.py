@@ -105,10 +105,11 @@ class OakDDepthCamera:
     def _build_pipeline(self) -> dai.Pipeline:
         pipeline = dai.Pipeline()
 
-        # Left mono camera
+        # Left mono camera — .build() binds the socket, no setResolution/setCamera needed
         mono_left = pipeline.create(dai.node.Camera).build(
             dai.CameraBoardSocket.CAM_B,
         )
+
         # Right mono camera
         mono_right = pipeline.create(dai.node.Camera).build(
             dai.CameraBoardSocket.CAM_C,
@@ -116,17 +117,57 @@ class OakDDepthCamera:
 
         # Stereo depth
         stereo = pipeline.create(dai.node.StereoDepth)
+        stereo.setDefaultProfilePreset(dai.node.StereoDepth.PresetMode.ACCURACY)
 
         # Link full-resolution mono outputs into stereo
-        mono_left.requestFullResolutionOutput().link(stereo.left)
-        mono_right.requestFullResolutionOutput().link(stereo.right)
+        # FPS is controlled here via the fps parameter
+        mono_left.requestFullResolutionOutput(fps=self.cam_cfg["fps"]).link(stereo.left)
+        mono_right.requestFullResolutionOutput(fps=self.cam_cfg["fps"]).link(stereo.right)
 
+        # v3 uses setters directly on the stereo node, not on initialConfig
         stereo.setRectification(True)
         stereo.setExtendedDisparity(self.cam_cfg["extended_disparity"])
         stereo.setLeftRightCheck(self.cam_cfg["lr_check"])
         stereo.setSubpixel(self.cam_cfg["subpixel"])
 
-        # Output queues created directly from node outputs
+        # These remain on initialConfig
+        stereo.initialConfig.setSubpixelFractionalBits(self.cam_cfg["subpixel_frac_bits"])
+        stereo.initialConfig.setDisparityShift(self.cam_cfg["disparity_shift"])
+        stereo.initialConfig.setConfidenceThreshold(self.cam_cfg["confidence"])
+        stereo.initialConfig.setMedianFilter(dai.MedianFilter.KERNEL_7x7)
+
+        stereo.setPostProcessingHardwareResources(3, 3)  # (numShaves, numMemorySlices)
+
+        # Speckle filter
+        stereo.initialConfig.postProcessing.speckleFilter.enable = True
+        stereo.initialConfig.postProcessing.speckleFilter.speckleRange = 50
+
+        # Temporal filter
+        stereo.initialConfig.postProcessing.temporalFilter.enable = True
+        stereo.initialConfig.postProcessing.temporalFilter.alpha = 0.15
+        stereo.initialConfig.postProcessing.temporalFilter.delta = 0
+
+        # Spatial filter — disabled for accuracy
+        stereo.initialConfig.postProcessing.spatialFilter.enable = False
+
+        # Threshold filter
+        stereo.initialConfig.postProcessing.thresholdFilter.minRange = 100
+        stereo.initialConfig.postProcessing.thresholdFilter.maxRange = 1000
+
+        # Decimation
+        stereo.initialConfig.postProcessing.decimationFilter.decimationFactor = 2
+        stereo.initialConfig.postProcessing.decimationFilter.decimationMode = (
+            dai.StereoDepthConfig.PostProcessing.DecimationFilter.DecimationMode.NON_ZERO_MEDIAN
+        )
+
+        # Bilateral
+        stereo.initialConfig.setBilateralFilterSigma(0)
+
+        # Brightness filter
+        stereo.initialConfig.postProcessing.brightnessFilter.minBrightness = 1
+        stereo.initialConfig.postProcessing.brightnessFilter.maxBrightness = 254
+
+        # v3: output queues directly from node outputs, no XLinkOut needed
         self._depth_queue = stereo.depth.createOutputQueue()
         self._disparity_queue = stereo.disparity.createOutputQueue()
 
@@ -174,8 +215,9 @@ class OakDDepthCamera:
             while q.has():
                 q.get()
                 
-    def capture(self, warmup_frames=30):
+    def capture(self):
         """Capture a depth + disparity pair after letting auto-exposure stabilize."""
+        warmup_frames = self.cam_cfg["warmup_frames"]
         log.info("Warming up camera (%d frames) …", warmup_frames)
         for i in range(warmup_frames):
             self._depth_queue.get()
@@ -368,7 +410,7 @@ def run_scan(cfg: dict):
             # ── Capture ──
             entry: dict = {"index": idx, "x": x, "y": y}
 
-            depth, disparity = camera.capture(warmup_frames=30)
+            depth, disparity = camera.capture()
             if depth is None:
                 log.warning("No depth frame at position %d — skipping.", idx)
                 continue
