@@ -34,3 +34,6 @@ grbl-master.zip
 *.yaml
 older data/
 video_output/
+*.npy
+depth_results/
+bad data/

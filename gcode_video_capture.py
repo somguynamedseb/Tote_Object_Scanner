@@ -519,18 +519,20 @@ class PassRecorder:
 
         self._left_writer: Optional[AviMjpegWriter] = None
         self._right_writer: Optional[AviMjpegWriter] = None
+        self._left_path: Optional[str] = None
+        self._right_path: Optional[str] = None
 
         tag = f"pass_{pass_num:03d}"
 
         if save_left_video:
-            left_path = str(out_dir / f"{tag}_left.avi")
-            self._left_writer = AviMjpegWriter(left_path, width, height, fps)
-            log.info("  Left video   → %s", left_path)
+            self._left_path = str(out_dir / f"{tag}_left.avi")
+            self._left_writer = AviMjpegWriter(self._left_path, width, height, fps)
+            log.info("  Left video   → %s", self._left_path)
 
         if save_right_video:
-            right_path = str(out_dir / f"{tag}_right.avi")
-            self._right_writer = AviMjpegWriter(right_path, width, height, fps)
-            log.info("  Right video  → %s", right_path)
+            self._right_path = str(out_dir / f"{tag}_right.avi")
+            self._right_writer = AviMjpegWriter(self._right_path, width, height, fps)
+            log.info("  Right video  → %s", self._right_path)
 
         self._queue: queue.Queue = queue.Queue()
         self._writer_thread = threading.Thread(
@@ -566,7 +568,12 @@ class PassRecorder:
         if self._right_writer is not None:
             self._right_writer.close()
 
-        return {"pass": self.pass_num, "frame_count": self._frame_count}
+        return {
+            "pass": self.pass_num,
+            "frame_count": self._frame_count,
+            "left_video": self._left_path,
+            "right_video": self._right_path,
+        }
 
 
 # ---------------------------------------------------------------------------
@@ -645,7 +652,7 @@ def run_video_capture(cfg: dict):
 
         time.sleep(settle)
         camera.flush_queues()
-
+        
         for p in range(1, num_passes + 1):
             current_y = y_axis_step[p - 1]
             print(f"Moving to starting position ({start_x} , {current_y})")
@@ -653,6 +660,11 @@ def run_video_capture(cfg: dict):
             gcode.send("G4 P0")
 
             log.info("━━━ Pass %d / %d ━━━", p, num_passes)
+            gcode.send("G4 P0")
+
+            time.sleep(settle)
+            
+            # gcode.send("G4 P0")
 
             # ── Open recorder ──
             recorder = PassRecorder(
@@ -727,12 +739,20 @@ def run_video_capture(cfg: dict):
             # Close recorder, collect metadata
             meta = recorder.close()
             meta["elapsed_s"] = round(elapsed, 2)
+            meta["feedrate"] = feedrate
+            meta["start_x"] = start_x
+            meta["start_y"] = current_y
+            meta["end_x"] = end_x
             manifest.append(meta)
 
             print(f"Returning to initial position ({start_x}, {current_y})")
             gcode.move_to(x=start_x, y=current_y, feed=r_feedrate)
             gcode.send("G4 P0")
-
+            
+            # time.sleep(settle)
+            gcode.send("G4 P0")
+            
+            
         # ── Save manifest ──
         manifest_path = out_dir / "manifest.json"
         manifest_path.write_text(json.dumps(manifest, indent=2))
