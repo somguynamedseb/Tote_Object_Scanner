@@ -15,11 +15,14 @@ Controls:
     Q / Esc         quit
 
 Point colors encode Z (height), using the Turbo colormap.
+A color bar PNG is saved alongside the .npy file so you can see what
+each color means in mm.
 
 Usage:
     python view_pointcloud.py pointcloud.npy
     python view_pointcloud.py pointcloud.npy --point-size 2.5
     python view_pointcloud.py pointcloud.npy --color-axis x
+    python view_pointcloud.py pointcloud.npy --colorbar-out custom.png
 """
 
 import argparse
@@ -36,7 +39,10 @@ except ImportError:
     sys.exit(1)
 
 try:
-    import matplotlib.cm as cm
+    import matplotlib
+    matplotlib.use("Agg")  # no GUI backend needed — we only save to disk
+    import matplotlib.pyplot as plt
+    import matplotlib.colors as mcolors
     _HAS_MPL = True
 except ImportError:
     _HAS_MPL = False
@@ -48,25 +54,62 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 
-def colorize(values: np.ndarray) -> np.ndarray:
-    """Map a 1D array of values to RGB in [0,1] using Turbo (or viridis fallback)."""
+def _get_cmap(name: str):
+    """Get a colormap, tolerating old/new matplotlib APIs."""
+    try:
+        return matplotlib.colormaps[name]
+    except (AttributeError, KeyError):
+        import matplotlib.cm as cm
+        return cm.get_cmap(name)
+
+
+def colorize(values: np.ndarray):
+    """Map a 1D array of values to RGB in [0,1] using Turbo (or viridis fallback).
+
+    Returns (colors, lo, hi, cmap_name) so the legend can reuse the same mapping.
+    """
     lo, hi = np.percentile(values, [2, 98])
     if hi <= lo:
         hi = lo + 1e-6
     norm = np.clip((values - lo) / (hi - lo), 0.0, 1.0)
 
+    cmap_name = None
     if _HAS_MPL:
         try:
-            cmap = cm.get_cmap("turbo")
-        except ValueError:
-            cmap = cm.get_cmap("viridis")
+            cmap = _get_cmap("turbo")
+            cmap_name = "turbo"
+        except (KeyError, ValueError):
+            cmap = _get_cmap("viridis")
+            cmap_name = "viridis"
         colors = cmap(norm)[:, :3]
     else:
-        # Simple blue→red ramp as a fallback
         colors = np.zeros((norm.size, 3), dtype=np.float64)
         colors[:, 0] = norm
         colors[:, 2] = 1.0 - norm
-    return colors.astype(np.float64)
+    return colors.astype(np.float64), float(lo), float(hi), cmap_name
+
+
+def save_colorbar(out_path: Path, lo: float, hi: float,
+                  cmap_name: str, axis_label: str) -> bool:
+    """Render a vertical color bar legend to a PNG. Returns True on success."""
+    if not _HAS_MPL:
+        log.warning("matplotlib not available — skipping color bar")
+        return False
+
+    cmap = _get_cmap(cmap_name)
+    fig, ax = plt.subplots(figsize=(2.2, 6.5))
+    norm = mcolors.Normalize(vmin=lo, vmax=hi)
+    sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+    sm.set_array([])
+
+    cbar = fig.colorbar(sm, cax=ax, orientation="vertical")
+    cbar.set_label(f"{axis_label.upper()} depth (mm)", fontsize=12)
+    cbar.ax.tick_params(labelsize=10)
+
+    fig.tight_layout()
+    fig.savefig(out_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    return True
 
 
 def main():
@@ -80,6 +123,11 @@ def main():
                         help="Voxel size in mm for downsampling (0 = off)")
     parser.add_argument("--no-axes", action="store_true",
                         help="Hide the coordinate axes gizmo")
+    parser.add_argument("--colorbar-out", type=str, default=None,
+                        help="Output path for the colorbar PNG "
+                             "(default: <npy_stem>_colorbar.png next to the input)")
+    parser.add_argument("--no-colorbar", action="store_true",
+                        help="Skip writing the colorbar PNG")
     args = parser.parse_args()
 
     path = Path(args.npy)
@@ -98,7 +146,22 @@ def main():
     log.info("  Z: %.1f .. %.1f mm", pts[:, 2].min(), pts[:, 2].max())
 
     axis_idx = {"x": 0, "y": 1, "z": 2}[args.color_axis]
-    colors = colorize(pts[:, axis_idx])
+    colors, lo, hi, cmap_name = colorize(pts[:, axis_idx])
+
+    log.info("Color range (%s-axis, 2nd–98th percentile): %.2f .. %.2f mm",
+             args.color_axis.upper(), lo, hi)
+
+    # Save the colorbar PNG before opening the viewer
+    if not args.no_colorbar and cmap_name:
+        if args.colorbar_out:
+            cbar_path = Path(args.colorbar_out)
+        else:
+            cbar_path = path.with_name(f"{path.stem}_colorbar.png")
+        try:
+            if save_colorbar(cbar_path, lo, hi, cmap_name, args.color_axis):
+                log.info("Saved color bar legend to %s", cbar_path.resolve())
+        except Exception as e:
+            log.warning("Failed to save color bar: %s", e)
 
     pcd = o3d.geometry.PointCloud()
     pcd.points = o3d.utility.Vector3dVector(pts.astype(np.float64))
@@ -112,7 +175,6 @@ def main():
 
     geometries = [pcd]
     if not args.no_axes:
-        # Size the axes relative to the cloud
         extent = pts.max(axis=0) - pts.min(axis=0)
         axis_size = float(max(extent.max() * 0.1, 10.0))
         frame = o3d.geometry.TriangleMesh.create_coordinate_frame(
